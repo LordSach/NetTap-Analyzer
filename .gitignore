@@ -134,3 +134,4 @@ output/
 results/
 temp/
 logs/
+scripts/git/commit_nettap_groups.sh
