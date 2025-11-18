@@ -1,0 +1,136 @@
+# ==========================================================
+#   Project: NetTapAnalyzer
+#   Purpose: Ignore all build, Vivado, temp, and editor files
+# ==========================================================
+
+
+# -----------------------------
+# Vivado / Xilinx Build Outputs
+# -----------------------------
+*.runs/
+*.cache/
+*.hw/
+*.ip_user_files/
+*.sim/
+*.xdc.bak
+*.jou
+*.log
+*.str
+*.xml
+*.html
+*.pb
+*.ltx
+
+# Vivado project files
+*.xpr
+*.xsa
+*.err
+*.rpt
+
+# Block design generated outputs
+*.bd
+*.dcp
+
+# Checkpoints & temp
+*.chk
+*.temp
+*.tmp
+*.cxi
+
+
+# -----------------------------
+# Verilog / SystemVerilog Build
+# -----------------------------
+*.vcd
+*.wdb
+*.vpd
+*.fsdb
+*.svf
+*.hex
+*.bin
+*.elf
+*.map
+
+# Simulation artifacts
+*.daidir/
+*.fuse*
+*.wlf
+vsim.wlf
+transcript
+work/
+xsim.dir/
+xvlog.pb
+xvhdl.pb
+webtalk.log
+
+
+# -----------------------------
+# Software (C/C++)
+# -----------------------------
+# Build artifacts
+*.o
+*.a
+*.so
+*.out
+*.elf
+*.exe
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+build/
+build*/
+
+# -----------------------------
+# Python Utility Scripts
+# -----------------------------
+__pycache__/
+*.pyc
+*.pyo
+
+
+# -----------------------------
+# VSCode
+# -----------------------------
+.vscode/
+*.code-workspace
+
+
+# -----------------------------
+# OS Files
+# -----------------------------
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+desktop.ini
+
+
+# -----------------------------
+# Generated docs, caches
+# -----------------------------
+docs/_build/
+*.aux
+*.toc
+*.pdf
+
+
+# -----------------------------
+# Local environment configs
+# -----------------------------
+.env
+*.swp
+*.swo
+
+
+# -----------------------------
+# NetTapAnalyzer Project Patterns
+# -----------------------------
+# Add your custom generated dirs here
+output/
+results/
+temp/
+logs/
