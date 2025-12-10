@@ -26,7 +26,7 @@ The end goal is to evolve this baseline into a **professional-grade hardware net
 - **ARP/IP/MAC parsing logic**
 - **Integrated PS C++ control application**
 - **Automated Vivado project creation**
-- **Total reproducible builds using Makefiles**
+f- **Total reproducible builds using Makefiles**
 
 ---
 
