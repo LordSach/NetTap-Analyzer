@@ -116,6 +116,7 @@ module axi_lite_register_file (
 
     // --- Interrupt Output (to PS) ---
     s2mm_irq_i,         // S2MM completion interrupt flag
+    mm2s_irq_i,         // MM2S completion interrupt flag
     irq_o               // Combined/Masked Interrupt signal to PS
 );
 
@@ -142,6 +143,9 @@ module axi_lite_register_file (
     // ----------------------------------------------------------------------
     localparam C_AXI_RESP_WIDTH = 2; // Width of AXI Response signals (BRESP, RRESP)
     localparam C_LENGTH_WIDTH   = 32; // Width of DMA Length registers
+
+    localparam RESP_OKAY   = 2'b00;
+    localparam RESP_SLVERR = 2'b10; // Slave Error
 
     // --- Register Address Map ---
     localparam ADDR_CTRL_REG    = 'h00; // [0]:MM2S Start, [1]:S2MM Start, [8]:MM2S Rst, [9]:S2MM Rst
@@ -236,7 +240,8 @@ module axi_lite_register_file (
 
     // --- Interrupt Output (to PS) ---
     input  logic                                s2mm_irq_i;         // S2MM completion interrupt flag
-    output logic                                irq_o;               // Combined/Masked Interrupt signal to PS
+    input  logic                                mm2s_irq_i;         // MM2S completion interrupt flag
+    output logic                                irq_o;              // Combined/Masked Interrupt signal to PS
 
     
     //---------------------------------------------------------------------------------------------------------------------
@@ -282,6 +287,7 @@ module axi_lite_register_file (
             s_axi_awready_o <= 1'b0;
             s_axi_wready_o  <= 1'b0;
             s_axi_bvalid_o  <= 1'b0;
+            s_axi_bresp_o   <= RESP_OKAY;
 
             reg_control     <= '0;
             reg_s2mm_addr   <= '0;
@@ -309,7 +315,7 @@ module axi_lite_register_file (
                         w_state         <= WR_RESP;
                         s_axi_wready_o  <= 1'b0;
                         s_axi_bvalid_o  <= 1'b1;
-                        s_axi_bresp_o   <= {C_AXI_RESP_WIDTH{1'b0}};
+                        s_axi_bresp_o   <= RESP_OKAY;
                         
 
                         // Address decoding and register update
@@ -344,7 +350,9 @@ module axi_lite_register_file (
                                 reg_mm2s_length[23:16]  <= (s_axi_wstrb_i[2])? s_axi_wdata_i[23:16] : reg_mm2s_length[23:16];
                                 reg_mm2s_length[31:24]  <= (s_axi_wstrb_i[3])? s_axi_wdata_i[31:24] : reg_mm2s_length[31:24];
                             end
-                            default:  // Ignore writes to unmapped addresses
+                            default: begin
+                                s_axi_bresp_o <= RESP_SLVERR;
+                            end// Ignore writes to unmapped addresses
                         endcase
                     end
                 end
@@ -423,7 +431,10 @@ module axi_lite_register_file (
                                     mm2s_busy_i                      // Bit 0: MM2S Busy
                                 };
                             end
-                            default: // rd_data_mux remains '0'
+                            default: begin
+                                rd_data_mux     <= '0;
+                                s_axi_rresp_o   <= RESP_SLVERR; // Flag invalid read
+                            end// rd_data_mux remains '0'
                         endcase
 
                         s_axi_arready_o <= 1'b0;
@@ -469,6 +480,6 @@ module axi_lite_register_file (
     assign mm2s_length_o    = reg_mm2s_length;
 
     // Interrupt output: Simple pass-through (in a final design, this should be gated/masked)
-    assign irq_o = s2mm_irq_i;
+    assign irq_o = s2mm_irq_i | mm2s_irq_i;
 
 endmodule
