@@ -142,6 +142,14 @@ module axi_lite_register_file (
     // ----------------------------------------------------------------------
     localparam C_AXI_RESP_WIDTH = 2; // Width of AXI Response signals (BRESP, RRESP)
     localparam C_LENGTH_WIDTH   = 32; // Width of DMA Length registers
+
+    // --- Register Address Map ---
+    localparam ADDR_CTRL_REG    = 'h00; // [0]:MM2S Start, [1]:S2MM Start, [8]:MM2S Rst, [9]:S2MM Rst
+    localparam ADDR_STATUS_REG  = 'h04; // [0]:MM2S Busy, [1]:S2MM Busy, [2]:S2MM IRQ
+    localparam ADDR_S2MM_ADDR   = 'h10; // S2MM Destination Address
+    localparam ADDR_S2MM_LENGTH = 'h14; // S2MM Transfer Length (Beats/Bytes)
+    localparam ADDR_MM2S_ADDR   = 'h20; // MM2S Source Address
+    localparam ADDR_MM2S_LENGTH = 'h24; // MM2S Transfer Length (Beats/Bytes)
     
     //---------------------------------------------------------------------------------------------------------------------
     // type definitions
@@ -239,8 +247,14 @@ module axi_lite_register_file (
     
     // --- Internal Registers (Placeholder) ---
     // These registers hold the values that the PS writes and the DMA channels read.
-    logic [C_AXI_LITE_DATA_WIDTH-1:0]           reg_s2mm_control; // Control register (Start, Reset, IRQ Mask)
+    logic [C_AXI_LITE_DATA_WIDTH-1:0]           reg_control; // Control register (Start, Reset, IRQ Mask)
+    logic [C_AXI_LITE_ADDR_WIDTH-1:0]           wr_addr_latched;
+
     logic [C_AXI_LITE_ADDR_WIDTH-1:0]           reg_s2mm_addr;    // Address register
+    logic [C_LENGTH_WIDTH-1:0]                  reg_s2mm_length;
+
+    logic [C_AXI_LITE_ADDR_WIDTH-1:0]           reg_mm2s_addr;
+    logic [C_LENGTH_WIDTH-1:0]                  reg_mm2s_length;
     // ... other internal registers for MM2S and Status ...
     logic [C_AXI_LITE_DATA_WIDTH-1:0]           w_strb_mask;
 
@@ -265,58 +279,110 @@ module axi_lite_register_file (
         if (~rst_ni) begin: WRITE_RESET_BLOCK
 
             w_state         <= WR_IDLE;
-            s_axi_awready_o <= 1'b1;
+            s_axi_awready_o <= 1'b0;
             s_axi_wready_o  <= 1'b0;
             s_axi_bvalid_o  <= 1'b0;
 
-            reg_s2mm_addr   <= {C_AXI_LITE_ADDR_WIDTH{1'b0}};
+            reg_control     <= '0;
+            reg_s2mm_addr   <= '0;
+            reg_s2mm_length <= '0;
+            reg_mm2s_addr   <= '0;
+            reg_mm2s_length <= '0;
+
+            wr_addr_latched <= {C_AXI_LITE_ADDR_WIDTH{1'b0}};
 
         end: WRITE_RESET_BLOCK
         else begin: WRITE_FSM_LOGIC
             unique case (w_state)
                 WR_IDLE:begin
-                    if (s_axi_awvalid_i) begin
+                    s_axi_awready_o <= 1'b1;
+                    if (s_axi_awvalid_i & s_axi_awready_o) begin
                         w_state         <= WR_ADDR;
-                        reg_s2mm_addr   <= s_axi_awaddr_i;
+                        wr_addr_latched <= s_axi_awaddr_i;
 
                         s_axi_awready_o <= 1'b0;
                         s_axi_wready_o  <= 1'b1;
                     end
                 end
                 WR_ADDR:begin
-                    if (s_axi_wvalid_i) begin
+                    if (s_axi_wvalid_i & s_axi_wready_o) begin
                         w_state                 <= WR_DATA;
                         s_axi_wready_o          <= 1'b0;
                         s_axi_bvalid_o          <= 1'b1;
 
-                        reg_s2mm_control[7:0]   <= (s_axi_wstrb_i[0])? s_axi_wdata_i[7:0]   : reg_s2mm_control[7:0];
-                        reg_s2mm_control[15:8]  <= (s_axi_wstrb_i[1])? s_axi_wdata_i[15:8]  : reg_s2mm_control[15:8];
-                        reg_s2mm_control[23:16] <= (s_axi_wstrb_i[2])? s_axi_wdata_i[23:16] : reg_s2mm_control[23:16];
-                        reg_s2mm_control[31:24] <= (s_axi_wstrb_i[3])? s_axi_wdata_i[31:24] : reg_s2mm_control[31:24];
+                        
 
+                        // Address decoding and register update
+                        case (wr_addr_latched)
+                            ADDR_CTRL_REG:    begin
+                                reg_control[7:0]        <= (s_axi_wstrb_i[0])? s_axi_wdata_i[7:0]   : reg_control[7:0];
+                                reg_control[15:8]       <= (s_axi_wstrb_i[1])? s_axi_wdata_i[15:8]  : reg_control[15:8];
+                                reg_control[23:16]      <= (s_axi_wstrb_i[2])? s_axi_wdata_i[23:16] : reg_control[23:16];
+                                reg_control[31:24]      <= (s_axi_wstrb_i[3])? s_axi_wdata_i[31:24] : reg_control[31:24];
+                            end
+                            ADDR_S2MM_ADDR:   begin
+                                reg_s2mm_addr[7:0]      <= (s_axi_wstrb_i[0])? s_axi_wdata_i[7:0]   : reg_s2mm_addr[7:0];
+                                reg_s2mm_addr[15:8]     <= (s_axi_wstrb_i[1])? s_axi_wdata_i[15:8]  : reg_s2mm_addr[15:8];
+                                reg_s2mm_addr[23:16]    <= (s_axi_wstrb_i[2])? s_axi_wdata_i[23:16] : reg_s2mm_addr[23:16];
+                                reg_s2mm_addr[31:24]    <= (s_axi_wstrb_i[3])? s_axi_wdata_i[31:24] : reg_s2mm_addr[31:24];
+                            end
+                            ADDR_S2MM_LENGTH: begin
+                                reg_s2mm_length[7:0]    <= (s_axi_wstrb_i[0])? s_axi_wdata_i[7:0]   : reg_s2mm_length[7:0];
+                                reg_s2mm_length[15:8]   <= (s_axi_wstrb_i[1])? s_axi_wdata_i[15:8]  : reg_s2mm_length[15:8];
+                                reg_s2mm_length[23:16]  <= (s_axi_wstrb_i[2])? s_axi_wdata_i[23:16] : reg_s2mm_length[23:16];
+                                reg_s2mm_length[31:24]  <= (s_axi_wstrb_i[3])? s_axi_wdata_i[31:24] : reg_s2mm_length[31:24];
+                            end
+                            ADDR_MM2S_ADDR:   begin
+                                reg_mm2s_addr[7:0]      <= (s_axi_wstrb_i[0])? s_axi_wdata_i[7:0]   : reg_mm2s_addr[7:0];
+                                reg_mm2s_addr[15:8]     <= (s_axi_wstrb_i[1])? s_axi_wdata_i[15:8]  : reg_mm2s_addr[15:8];
+                                reg_mm2s_addr[23:16]    <= (s_axi_wstrb_i[2])? s_axi_wdata_i[23:16] : reg_mm2s_addr[23:16];
+                                reg_mm2s_addr[31:24]    <= (s_axi_wstrb_i[3])? s_axi_wdata_i[31:24] : reg_mm2s_addr[31:24];
+                            end
+                            ADDR_MM2S_LENGTH: begin
+                                reg_mm2s_length[7:0]    <= (s_axi_wstrb_i[0])? s_axi_wdata_i[7:0]   : reg_mm2s_length[7:0];
+                                reg_mm2s_length[15:8]   <= (s_axi_wstrb_i[1])? s_axi_wdata_i[15:8]  : reg_mm2s_length[15:8];
+                                reg_mm2s_length[23:16]  <= (s_axi_wstrb_i[2])? s_axi_wdata_i[23:16] : reg_mm2s_length[23:16];
+                                reg_mm2s_length[31:24]  <= (s_axi_wstrb_i[3])? s_axi_wdata_i[31:24] : reg_mm2s_length[31:24];
+                            end
+                            default:  // Ignore writes to unmapped addresses
+                        endcase
                     end
                 end
                 WR_DATA:begin
-                    if (s_axi_bready_i) begin
+                    if (s_axi_bready_i & s_axi_bvalid_o) begin
                         s_axi_bresp_o   <= {C_AXI_RESP_WIDTH{1'b0}};
                         s_axi_bvalid_o  <= 1'b0;
                     end
                 end
                 WR_RESP:begin
                     w_state         <= WR_IDLE;
-                    s_axi_awready_o <= 1'b1;
+
+                    s_axi_awready_o <= 1'b0;
                     s_axi_wready_o  <= 1'b0;
                     s_axi_bvalid_o  <= 1'b0;
 
-                    reg_s2mm_addr   <= {C_AXI_LITE_ADDR_WIDTH{1'b0}};
+                    reg_control     <= '0;
+                    reg_s2mm_addr   <= '0;
+                    reg_s2mm_length <= '0;
+                    reg_mm2s_addr   <= '0;
+                    reg_mm2s_length <= '0;
+
+                    wr_addr_latched <= {C_AXI_LITE_ADDR_WIDTH{1'b0}};
                 end 
                 default:begin
                     w_state         <= WR_IDLE;
-                    s_axi_awready_o <= 1'b1;
+
+                    s_axi_awready_o <= 1'b0;
                     s_axi_wready_o  <= 1'b0;
                     s_axi_bvalid_o  <= 1'b0;
 
-                    reg_s2mm_addr   <= {C_AXI_LITE_ADDR_WIDTH{1'b0}};
+                    reg_control     <= '0;
+                    reg_s2mm_addr   <= '0;
+                    reg_s2mm_length <= '0;
+                    reg_mm2s_addr   <= '0;
+                    reg_mm2s_length <= '0;
+
+                    wr_addr_latched <= {C_AXI_LITE_ADDR_WIDTH{1'b0}};
                 end 
             endcase
         end: WRITE_FSM_LOGIC
@@ -326,14 +392,31 @@ module axi_lite_register_file (
     always_ff @(posedge clk_i or negedge rst_ni) begin: READ_FSM
         if (~rst_ni) begin: READ_RESET_BLOCK
             
+            r_state         <= RD_IDLE;
+            s_axi_arready_o <= 1'b1;
+            s_axi_rvalid_o  <= 1'b0;
+
         end: READ_RESET_BLOCK
         else begin: READ_FSM_LOGIC
             unique case (r_state)
                 RD_IDLE:begin
-                    
+                    if (s_axi_arvalid_i) begin
+                        r_state         <= RD_ADDR;
+                        reg_mm2s_addr   <= s_axi_araddr_i;
+
+                        s_axi_arready_o <= 1'b0;
+                    end
                 end
                 RD_ADDR:begin
-                    
+                    if (s_axi_rready_i) begin
+                        r_state                 <= RD_DATA;
+                        s_axi_rvalid_o          <= 1'b0;
+                        s_axi_rresp_o           <= {C_AXI_RESP_WIDTH{1'b0}};
+                        
+                        s_axi_rdata_o           <= reg_control;
+                        s_axi_rvalid_o          <= 1'b1;
+
+                    end
                 end
                 RD_DATA:begin
                     
@@ -348,7 +431,7 @@ module axi_lite_register_file (
     
     
     // Example output assignment (Conceptual):
-    assign s2mm_start_o     = reg_s2mm_control[0];
+    assign s2mm_start_o     = reg_control[0];
     assign s2mm_dest_addr_o = reg_s2mm_addr;
     
     // Example interrupt aggregation (Conceptual):
