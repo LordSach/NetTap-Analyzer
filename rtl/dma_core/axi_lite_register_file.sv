@@ -156,16 +156,14 @@ module axi_lite_register_file (
     //---------------------------------------------------------------------------------------------------------------------
     
     typedef enum logic [3:0] {
-        WR_IDLE,    // Waiting for a new write transaction to begin.
-        WR_ADDR,    // Address has been accepted (awvalid and awready asserted). Waiting for the write data.
-        WR_DATA,    // Data has been accepted (wvalid and wready asserted). Performing the register write and preparing the response.
-        WR_RESP     // Response is being asserted (bvalid asserted). Waiting for the Master (PS) to accept the response (bready).
+        WR_IDLE,    // Waiting for a new write transaction to begin, if available address will been accepted (awvalid and awready asserted). Waiting for the write data.
+        WR_REGISTERING,    // Data has been accepted (wvalid and wready asserted). Performing the register write and preparing the response.
+        WR_RESP    // Response is being asserted (bvalid asserted). Waiting for the Master (PS) to accept the response (bready).
     } w_state_t;
     
     typedef enum logic [3:0] {
-        RD_IDLE,    // Waiting for a new read transaction to begin.
-        RD_ADDR,    // Address has been accepted. Waiting for data to be retrieved from the register.
-        RD_DATA     // Data is ready (rdata_o and rresp_o are valid). Asserting rvalid and waiting for the Master (PS) to accept the data (rready).
+        RD_IDLE,    // Waiting for a new read transaction to begin. If available address is been accepted. Waiting for data to be retrieved from the register.
+        RD_RESP    // Data is ready (rdata_o and rresp_o are valid). Asserting rvalid and waiting for the Master (PS) to accept the data (rready).     
     } r_state_t;
 
     //---------------------------------------------------------------------------------------------------------------------
@@ -258,6 +256,8 @@ module axi_lite_register_file (
     // ... other internal registers for MM2S and Status ...
     logic [C_AXI_LITE_DATA_WIDTH-1:0]           w_strb_mask;
 
+    logic [C_AXI_LITE_DATA_WIDTH-1:0]           rd_data_mux; // Data selected for read output
+
     // FSM status logics
     w_state_t w_state;
     r_state_t r_state;
@@ -297,19 +297,19 @@ module axi_lite_register_file (
                 WR_IDLE:begin
                     s_axi_awready_o <= 1'b1;
                     if (s_axi_awvalid_i & s_axi_awready_o) begin
-                        w_state         <= WR_ADDR;
+                        w_state         <= WR_REGISTERING;
                         wr_addr_latched <= s_axi_awaddr_i;
 
                         s_axi_awready_o <= 1'b0;
                         s_axi_wready_o  <= 1'b1;
                     end
                 end
-                WR_ADDR:begin
+                WR_REGISTERING:begin
                     if (s_axi_wvalid_i & s_axi_wready_o) begin
-                        w_state                 <= WR_DATA;
-                        s_axi_wready_o          <= 1'b0;
-                        s_axi_bvalid_o          <= 1'b1;
-
+                        w_state         <= WR_RESP;
+                        s_axi_wready_o  <= 1'b0;
+                        s_axi_bvalid_o  <= 1'b1;
+                        s_axi_bresp_o   <= {C_AXI_RESP_WIDTH{1'b0}};
                         
 
                         // Address decoding and register update
@@ -348,27 +348,25 @@ module axi_lite_register_file (
                         endcase
                     end
                 end
-                WR_DATA:begin
+                WR_RESP:begin
                     if (s_axi_bready_i & s_axi_bvalid_o) begin
-                        s_axi_bresp_o   <= {C_AXI_RESP_WIDTH{1'b0}};
                         s_axi_bvalid_o  <= 1'b0;
+
+                        w_state         <= WR_IDLE;
+
+                        s_axi_awready_o <= 1'b0;
+                        s_axi_wready_o  <= 1'b0;
+                        s_axi_bvalid_o  <= 1'b0;
+
+                        reg_control     <= '0;
+                        reg_s2mm_addr   <= '0;
+                        reg_s2mm_length <= '0;
+                        reg_mm2s_addr   <= '0;
+                        reg_mm2s_length <= '0;
+
+                        wr_addr_latched <= {C_AXI_LITE_ADDR_WIDTH{1'b0}};
                     end
                 end
-                WR_RESP:begin
-                    w_state         <= WR_IDLE;
-
-                    s_axi_awready_o <= 1'b0;
-                    s_axi_wready_o  <= 1'b0;
-                    s_axi_bvalid_o  <= 1'b0;
-
-                    reg_control     <= '0;
-                    reg_s2mm_addr   <= '0;
-                    reg_s2mm_length <= '0;
-                    reg_mm2s_addr   <= '0;
-                    reg_mm2s_length <= '0;
-
-                    wr_addr_latched <= {C_AXI_LITE_ADDR_WIDTH{1'b0}};
-                end 
                 default:begin
                     w_state         <= WR_IDLE;
 
@@ -393,48 +391,84 @@ module axi_lite_register_file (
         if (~rst_ni) begin: READ_RESET_BLOCK
             
             r_state         <= RD_IDLE;
-            s_axi_arready_o <= 1'b1;
+            s_axi_arready_o <= 1'b0;
             s_axi_rvalid_o  <= 1'b0;
+            s_axi_rresp_o   <= {C_AXI_RESP_WIDTH{1'b0}};
+            rd_data_mux     <= '0;
 
         end: READ_RESET_BLOCK
         else begin: READ_FSM_LOGIC
             unique case (r_state)
                 RD_IDLE:begin
-                    if (s_axi_arvalid_i) begin
-                        r_state         <= RD_ADDR;
-                        reg_mm2s_addr   <= s_axi_araddr_i;
+                    s_axi_arready_o     <= 1'b1;
+
+                    if (s_axi_arvalid_i & s_axi_arready_o) begin
+                        r_state         <= RD_RESP;
+                        s_axi_rvalid_o  <= 1'b1;
+                        s_axi_rresp_o   <= {C_AXI_RESP_WIDTH{1'b0}};
+
+                        // Select the appropriate register content based on current read address
+                        case (s_axi_araddr_i)
+                            ADDR_CTRL_REG:    rd_data_mux <= reg_control;
+                            ADDR_S2MM_ADDR:   rd_data_mux <= reg_s2mm_addr;
+                            ADDR_S2MM_LENGTH: rd_data_mux <= reg_s2mm_length;
+                            ADDR_MM2S_ADDR:   rd_data_mux <= reg_mm2s_addr;
+                            ADDR_MM2S_LENGTH: rd_data_mux <= reg_mm2s_length;
+                            ADDR_STATUS_REG: begin
+                                // Combine status inputs into a readable status word
+                                rd_data_mux <= {
+                                    {(C_AXI_LITE_DATA_WIDTH-3){1'b0}}, // Reserved bits (3 bits used)
+                                    s2mm_irq_i,                      // Bit 2: S2MM IRQ
+                                    s2mm_busy_i,                     // Bit 1: S2MM Busy
+                                    mm2s_busy_i                      // Bit 0: MM2S Busy
+                                };
+                            end
+                            default: // rd_data_mux remains '0'
+                        endcase
 
                         s_axi_arready_o <= 1'b0;
                     end
                 end
-                RD_ADDR:begin
-                    if (s_axi_rready_i) begin
-                        r_state                 <= RD_DATA;
-                        s_axi_rvalid_o          <= 1'b0;
-                        s_axi_rresp_o           <= {C_AXI_RESP_WIDTH{1'b0}};
-                        
-                        s_axi_rdata_o           <= reg_control;
-                        s_axi_rvalid_o          <= 1'b1;
-
+                RD_RESP:begin
+                    if (s_axi_rready_i & s_axi_rvalid_o) begin
+                        r_state         <= RD_IDLE;
+                        s_axi_rvalid_o  <= 1'b0;
+                        rd_data_mux     <= '0;
                     end
                 end
-                RD_DATA:begin
-                    
-                end 
                 default:begin
-                    
+                    r_state         <= RD_IDLE;
+                    s_axi_arready_o <= 1'b0;
+                    s_axi_rvalid_o  <= 1'b0;
+                    s_axi_rresp_o   <= {C_AXI_RESP_WIDTH{1'b0}};
+                    rd_data_mux     <= '0;
                 end 
             endcase
         end: READ_FSM_LOGIC
     end: READ_FSM
     
-    
-    
-    // Example output assignment (Conceptual):
-    assign s2mm_start_o     = reg_control[0];
+    // --- AXI Read Channel Output Connection ---
+    assign s_axi_rdata_o = rd_data_mux;
+
+
+    // ======================================================================
+    // 3. DMA Control Signal Generation (Mapping Registers to DMA Channels)
+    // ======================================================================
+
+    // Map control register bits to DMA control outputs
+    assign mm2s_start_o = reg_control[0];
+    assign s2mm_start_o = reg_control[1];
+
+    assign mm2s_reset_o = reg_control[8];
+    assign s2mm_reset_o = reg_control[9];
+
+    // Map configuration registers to DMA configuration outputs
     assign s2mm_dest_addr_o = reg_s2mm_addr;
-    
-    // Example interrupt aggregation (Conceptual):
-    assign irq_o            = s2mm_irq_i; // Simple pass-through or gated by an IRQ Mask register
+    assign s2mm_length_o    = reg_s2mm_length;
+    assign mm2s_src_addr_o  = reg_mm2s_addr;
+    assign mm2s_length_o    = reg_mm2s_length;
+
+    // Interrupt output: Simple pass-through (in a final design, this should be gated/masked)
+    assign irq_o = s2mm_irq_i;
 
 endmodule
